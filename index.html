@@ -5,8 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Parametric Pulsing Heart</title>
     <style>
-        body, html { margin: 0; padding: 0; overflow: hidden; background-color: #080808; }
-        canvas { display: block; width: 100vw; height: 100vh; }
+        body, html { 
+            margin: 0; padding: 0; overflow: hidden; 
+            background-color: #080808; width: 100%; height: 100%;
+        }
+        canvas { display: block; }
     </style>
 </head>
 <body>
@@ -18,9 +21,9 @@
         const offscreen = document.createElement('canvas');
         const offCtx = offscreen.getContext('2d');
 
-        const P1_DUR = 2000;
-        const P2_DUR = 1400;
-        const P3_DUR = 15000;
+        const P1_DUR = 2000;  
+        const P2_DUR = 1400;  
+        const P3_DUR = 15000; 
         const TOTAL_DUR = P1_DUR + P2_DUR + P3_DUR;
 
         function resize() {
@@ -34,7 +37,6 @@
         resize();
 
         function getHeartPoint(t, scale) {
-            // Parametric Equation: x = 16sin³(t), y = 13cos(t)-5cos(2t)-2cos(3t)-cos(4t)
             const x = 16 * Math.pow(Math.sin(t), 3);
             const y = -(13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t));
             return { x: x * scale, y: y * scale };
@@ -42,7 +44,7 @@
 
         function drawHeartPath(c, scale, cx, cy) {
             c.beginPath();
-            for (let t = 0; t <= Math.PI * 2; t += 0.02) {
+            for (let t = 0; t <= Math.PI * 2; t += 0.01) { // Higher resolution path
                 const p = getHeartPoint(t, scale);
                 if (t === 0) c.moveTo(cx + p.x, cy + p.y);
                 else c.lineTo(cx + p.x, cy + p.y);
@@ -50,7 +52,7 @@
             c.closePath();
         }
 
-        function render(time) {
+        function animate(time) {
             const elapsed = time % TOTAL_DUR;
             const cx = canvas.width / 2;
             const cy = canvas.height / 2;
@@ -60,29 +62,32 @@
             ctx.fillRect(0, 0, canvas.width, canvas.height);
 
             if (elapsed < P1_DUR) {
-                // Phase 1: Outlines
                 const numRings = 8;
                 for (let i = 0; i < numRings; i++) {
-                    const delay = i * 120;
+                    const delay = i * 140; 
                     const ringElapsed = elapsed - delay;
                     if (ringElapsed > 0) {
-                        const decay = Math.exp(-ringElapsed / 250);
-                        const s = baseScale * (0.5 + (i * 0.72 / 7));
+                        const decay = Math.exp(-ringElapsed / 180);
+                        // Tightened scaling to prevent messy overlap
+                        const s = baseScale * (0.5 + (i * 0.09)); 
+                        
                         ctx.save();
-                        ctx.shadowBlur = 70 * decay;
+                        ctx.shadowBlur = 50 * decay;
                         ctx.shadowColor = `rgba(255, 40, 150, ${decay})`;
-                        ctx.strokeStyle = `rgba(255, 120, 200, ${0.4 + 0.6 * decay})`;
-                        ctx.lineWidth = (numRings - i) * 1.5;
+                        ctx.strokeStyle = `rgba(255, 100, 180, ${0.3 + 0.7 * decay})`;
+                        ctx.lineWidth = 0.8; // Thin, sharp lines
                         drawHeartPath(ctx, s, cx, cy);
                         ctx.stroke();
-                        ctx.strokeStyle = `rgba(255, 230, 240, ${decay})`;
-                        ctx.lineWidth = 0.8;
+
+                        // Inner bright highlight
+                        ctx.strokeStyle = `rgba(255, 255, 255, ${0.9 * decay})`;
+                        ctx.lineWidth = 0.4;
                         ctx.stroke();
                         ctx.restore();
                     }
                 }
-            } else {
-                // Phase 2 & 3: Dots and Pulsing
+            } 
+            else {
                 let pulseScale = 1.0;
                 let p2Progress = 1.0;
 
@@ -90,46 +95,64 @@
                     const t = (elapsed - P1_DUR) / P2_DUR;
                     p2Progress = 1 - Math.pow(1 - t, 3);
                 } else {
-                    const p3Norm = ((elapsed - P1_DUR - P2_DUR) / 5000) % 1;
+                    const p3Time = elapsed - P1_DUR - P2_DUR;
+                    const p3Norm = (p3Time / 5000) % 1;
                     pulseScale = 0.7 + (Math.sin(p3Norm * Math.PI) * 0.55);
                 }
 
-                const s = baseScale * pulseScale;
+                // Render High-Density Dots to Offscreen
                 offCtx.clearRect(0, 0, canvas.width, canvas.height);
-                offCtx.save();
-                drawHeartPath(offCtx, s, cx, cy);
-                offCtx.clip();
+                renderHighDensityDots(offCtx, baseScale, pulseScale, p2Progress, cx, cy);
 
-                const dotSpacing = 6;
-                const revealLimit = 25 * baseScale * p2Progress;
-                for (let x = -20 * s; x < 20 * s; x += dotSpacing) {
-                    for (let y = -20 * s; y < 20 * s; y += dotSpacing) {
-                        const dist = Math.sqrt(x*x + y*y);
-                        if (dist < revealLimit) {
-                            const colorDist = dist / (20 * s);
-                            offCtx.fillStyle = `rgb(255, ${150 - colorDist * 80}, ${210 - colorDist * 80})`;
-                            offCtx.fillRect(cx + x, cy + y, 3, 3);
-                        }
+                // Multi-layered Breathing Glow
+                const glowIntensity = (pulseScale - 0.7) / 0.55;
+                ctx.save();
+                const radii = [0.22, 0.09, 0.035];
+                const opacities = [0.15, 0.3, 0.5];
+
+                radii.forEach((r, i) => {
+                    ctx.save();
+                    ctx.filter = `blur(${baseScale * pulseScale * r}px)`;
+                    ctx.globalAlpha = opacities[i] * (elapsed < P1_DUR + P2_DUR ? p2Progress : glowIntensity);
+                    ctx.drawImage(offscreen, 0, 0);
+                    ctx.restore();
+                });
+
+                // Final Sharp Layer
+                ctx.drawImage(offscreen, 0, 0);
+                ctx.restore();
+            }
+            requestAnimationFrame(animate);
+        }
+
+        function renderHighDensityDots(targetCtx, baseScale, pulseScale, fillProgress, cx, cy) {
+            const s = baseScale * pulseScale;
+            targetCtx.save();
+            drawHeartPath(targetCtx, s, cx, cy);
+            targetCtx.clip();
+
+            // Ultrafine settings
+            const dotSpacing = 1.8; 
+            const dotSize = 1.5;
+            const revealRadius = 35 * baseScale * fillProgress; 
+
+            for (let x = -22 * s; x < 22 * s; x += dotSpacing) {
+                for (let y = -22 * s; y < 22 * s; y += dotSpacing) {
+                    const dist = Math.sqrt(x*x + y*y);
+                    if (dist < revealRadius) {
+                        const colorDist = dist / (22 * s);
+                        const r = 255;
+                        const g = 150 - (colorDist * 80);
+                        const b = 210 - (colorDist * 80);
+                        targetCtx.fillStyle = `rgb(${r}, ${g}, ${b})`;
+                        targetCtx.fillRect(cx + x, cy + y, dotSize, dotSize);
                     }
                 }
-                offCtx.restore();
-
-                if (elapsed > P1_DUR + P2_DUR) {
-                    const glowIntensity = (pulseScale - 0.7) / 0.55;
-                    const radii = [0.22, 0.09, 0.035];
-                    radii.forEach((r, i) => {
-                        ctx.save();
-                        ctx.filter = `blur(${s * r}px)`;
-                        ctx.globalAlpha = [0.2, 0.4, 0.6][i] * glowIntensity;
-                        ctx.drawImage(offscreen, 0, 0);
-                        ctx.restore();
-                    });
-                }
-                ctx.drawImage(offscreen, 0, 0);
             }
-            requestAnimationFrame(render);
+            targetCtx.restore();
         }
-        requestAnimationFrame(render);
+
+        requestAnimationFrame(animate);
     </script>
 </body>
 </html>
