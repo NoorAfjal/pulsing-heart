@@ -5,10 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Parametric Pulsing Heart</title>
     <style>
-        body, html { 
-            margin: 0; padding: 0; overflow: hidden; 
-            background-color: #080808; width: 100%; height: 100%;
-        }
+        body, html { margin: 0; padding: 0; overflow: hidden; background-color: #080808; width: 100%; height: 100%; }
         canvas { display: block; }
     </style>
 </head>
@@ -18,8 +15,12 @@
     <script>
         const canvas = document.getElementById('heartCanvas');
         const ctx = canvas.getContext('2d');
-        const offscreen = document.createElement('canvas');
-        const offCtx = offscreen.getContext('2d');
+        
+        // Memory canvases for performance
+        const dotCache = document.createElement('canvas');
+        const dCtx = dotCache.getContext('2d');
+        const glowCache = document.createElement('canvas');
+        const gCtx = glowCache.getContext('2d');
 
         const P1_DUR = 2000;  
         const P2_DUR = 1400;  
@@ -29,12 +30,9 @@
         function resize() {
             canvas.width = window.innerWidth;
             canvas.height = window.innerHeight;
-            offscreen.width = canvas.width;
-            offscreen.height = canvas.height;
+            // Pre-calculate the dot heart at a large fixed size
+            setupCache();
         }
-
-        window.addEventListener('resize', resize);
-        resize();
 
         function getHeartPoint(t, scale) {
             const x = 16 * Math.pow(Math.sin(t), 3);
@@ -44,12 +42,35 @@
 
         function drawHeartPath(c, scale, cx, cy) {
             c.beginPath();
-            for (let t = 0; t <= Math.PI * 2; t += 0.01) { // Higher resolution path
+            for (let t = 0; t <= Math.PI * 2; t += 0.02) {
                 const p = getHeartPoint(t, scale);
                 if (t === 0) c.moveTo(cx + p.x, cy + p.y);
                 else c.lineTo(cx + p.x, cy + p.y);
             }
             c.closePath();
+        }
+
+        function setupCache() {
+            const size = 800; // High resolution base
+            dotCache.width = size;
+            dotCache.height = size;
+            const sc = size / 45;
+            const mid = size / 2;
+
+            dCtx.clearRect(0, 0, size, size);
+            dCtx.save();
+            drawHeartPath(dCtx, sc, mid, mid);
+            dCtx.clip();
+
+            const spacing = 1.8;
+            for (let x = -22 * sc; x < 22 * sc; x += spacing) {
+                for (let y = -22 * sc; y < 22 * sc; y += spacing) {
+                    const dist = Math.sqrt(x*x + y*y) / (22 * sc);
+                    dCtx.fillStyle = `rgb(255, ${150 - dist * 80}, ${210 - dist * 80})`;
+                    dCtx.fillRect(mid + x, mid + y, 1.5, 1.5);
+                }
+            }
+            dCtx.restore();
         }
 
         function animate(time) {
@@ -65,93 +86,55 @@
                 const numRings = 8;
                 for (let i = 0; i < numRings; i++) {
                     const delay = i * 140; 
-                    const ringElapsed = elapsed - delay;
-                    if (ringElapsed > 0) {
-                        const decay = Math.exp(-ringElapsed / 180);
-                        // Tightened scaling to prevent messy overlap
-                        const s = baseScale * (0.5 + (i * 0.09)); 
-                        
+                    const rElapsed = elapsed - delay;
+                    if (rElapsed > 0) {
+                        const decay = Math.exp(-rElapsed / 180);
+                        const s = baseScale * (0.5 + (i * 0.09));
                         ctx.save();
-                        ctx.shadowBlur = 50 * decay;
+                        ctx.shadowBlur = 40 * decay;
                         ctx.shadowColor = `rgba(255, 40, 150, ${decay})`;
-                        ctx.strokeStyle = `rgba(255, 100, 180, ${0.3 + 0.7 * decay})`;
-                        ctx.lineWidth = 0.8; // Thin, sharp lines
+                        ctx.strokeStyle = `rgba(255, 100, 180, ${0.2 + 0.8 * decay})`;
+                        ctx.lineWidth = 0.8;
                         drawHeartPath(ctx, s, cx, cy);
-                        ctx.stroke();
-
-                        // Inner bright highlight
-                        ctx.strokeStyle = `rgba(255, 255, 255, ${0.9 * decay})`;
-                        ctx.lineWidth = 0.4;
                         ctx.stroke();
                         ctx.restore();
                     }
                 }
-            } 
-            else {
-                let pulseScale = 1.0;
-                let p2Progress = 1.0;
+            } else {
+                let scale = 1.0;
+                let progress = 1.0;
 
                 if (elapsed < P1_DUR + P2_DUR) {
-                    const t = (elapsed - P1_DUR) / P2_DUR;
-                    p2Progress = 1 - Math.pow(1 - t, 3);
+                    progress = 1 - Math.pow(1 - (elapsed - P1_DUR) / P2_DUR, 3);
                 } else {
-                    const p3Time = elapsed - P1_DUR - P2_DUR;
-                    const p3Norm = (p3Time / 5000) % 1;
-                    pulseScale = 0.7 + (Math.sin(p3Norm * Math.PI) * 0.55);
+                    const p3Norm = ((elapsed - P1_DUR - P2_DUR) / 5000) % 1;
+                    scale = 0.7 + (Math.sin(p3Norm * Math.PI) * 0.55);
                 }
 
-                // Render High-Density Dots to Offscreen
-                offCtx.clearRect(0, 0, canvas.width, canvas.height);
-                renderHighDensityDots(offCtx, baseScale, pulseScale, p2Progress, cx, cy);
-
-                // Multi-layered Breathing Glow
-                const glowIntensity = (pulseScale - 0.7) / 0.55;
+                const finalSize = baseScale * scale * 45 * 1.2; 
+                
                 ctx.save();
-                const radii = [0.22, 0.09, 0.035];
-                const opacities = [0.15, 0.3, 0.5];
+                if (elapsed > P1_DUR + P2_DUR) {
+                    // Optimized Glow: Single shadow pass instead of multi-blur
+                    ctx.shadowBlur = 50 * ((scale - 0.7) / 0.55);
+                    ctx.shadowColor = 'rgba(255, 40, 150, 0.8)';
+                }
+                
+                // Mask for Phase 2 reveal
+                if (progress < 1.0) {
+                    ctx.beginPath();
+                    ctx.arc(cx, cy, progress * 400, 0, Math.PI * 2);
+                    ctx.clip();
+                }
 
-                radii.forEach((r, i) => {
-                    ctx.save();
-                    ctx.filter = `blur(${baseScale * pulseScale * r}px)`;
-                    ctx.globalAlpha = opacities[i] * (elapsed < P1_DUR + P2_DUR ? p2Progress : glowIntensity);
-                    ctx.drawImage(offscreen, 0, 0);
-                    ctx.restore();
-                });
-
-                // Final Sharp Layer
-                ctx.drawImage(offscreen, 0, 0);
+                ctx.drawImage(dotCache, cx - finalSize/2, cy - finalSize/2, finalSize, finalSize);
                 ctx.restore();
             }
             requestAnimationFrame(animate);
         }
 
-        function renderHighDensityDots(targetCtx, baseScale, pulseScale, fillProgress, cx, cy) {
-            const s = baseScale * pulseScale;
-            targetCtx.save();
-            drawHeartPath(targetCtx, s, cx, cy);
-            targetCtx.clip();
-
-            // Ultrafine settings
-            const dotSpacing = 1.8; 
-            const dotSize = 1.5;
-            const revealRadius = 35 * baseScale * fillProgress; 
-
-            for (let x = -22 * s; x < 22 * s; x += dotSpacing) {
-                for (let y = -22 * s; y < 22 * s; y += dotSpacing) {
-                    const dist = Math.sqrt(x*x + y*y);
-                    if (dist < revealRadius) {
-                        const colorDist = dist / (22 * s);
-                        const r = 255;
-                        const g = 150 - (colorDist * 80);
-                        const b = 210 - (colorDist * 80);
-                        targetCtx.fillStyle = `rgb(${r}, ${g}, ${b})`;
-                        targetCtx.fillRect(cx + x, cy + y, dotSize, dotSize);
-                    }
-                }
-            }
-            targetCtx.restore();
-        }
-
+        window.addEventListener('resize', resize);
+        resize();
         requestAnimationFrame(animate);
     </script>
 </body>
